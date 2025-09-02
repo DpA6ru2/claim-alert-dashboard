@@ -1,64 +1,41 @@
-import streamlit as st
+import requests
+from bs4 import BeautifulSoup
 import pandas as pd
-from datetime import datetime
-from supabase import create_client
+from supabase import create_client, Client
 
-# --- Supabase Setup ---
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Supabase setup
+url = "https://your-supabase-url.supabase.co"
+key = "your-supabase-api-key"
+supabase: Client = create_client(url, key)
 
-# --- Page Config ---
-st.set_page_config(page_title="Riverside Claim Dashboard", layout="wide")
-st.title("🏠 Riverside County Tax Overages Dashboard")
-st.markdown("Track unclaimed excess proceeds from tax-defaulted property sales.")
+def fetch_tax_sale_data():
+    response = requests.get("https://countytreasurer.org/tax-sales")
+    soup = BeautifulSoup(response.text, "html.parser")
+    
+    # Example: Extract table rows with parcel data
+    rows = soup.select("table tr")
+    data = []
+    for row in rows[1:]:
+        cols = row.find_all("td")
+        if len(cols) >= 4:
+            parcel = cols[0].text.strip()
+            min_bid = float(cols[2].text.replace("$", "").replace(",", ""))
+            sale_price = float(cols[3].text.replace("$", "").replace(",", ""))
+            overage = sale_price - min_bid if sale_price > min_bid else 0
+            data.append({"parcel": parcel, "min_bid": min_bid, "sale_price": sale_price, "overage": overage})
+    
+    return pd.DataFrame(data)
 
-# --- Load Data from Supabase ---
-try:
-    response = supabase.table("overages_riverside").select("*").execute()
-    df = pd.DataFrame(response.data)
-except Exception as e:
-    st.error(f"Failed to load data: {e}")
-    st.stop()
+def store_in_supabase(df):
+    for _, row in df.iterrows():
+        supabase.table("riverside_overages").insert({
+            "parcel": row["parcel"],
+            "min_bid": row["min_bid"],
+            "sale_price": row["sale_price"],
+            "overage": row["overage"]
+        }).execute()
 
-# --- Data Cleanup ---
-for col in ["overage_amount", "minimum_bid", "sale_price"]:
-    df[col] = pd.to_numeric(df[col], errors="coerce")
-
-# --- Claim Deadline Countdown ---
-def calculate_days_left(deadline):
-    try:
-        return (datetime.strptime(deadline, "%Y-%m-%d") - datetime.today()).days
-    except:
-        return None
-
-df["days_left"] = df["claim_deadline"].apply(calculate_days_left)
-
-# --- Filters ---
-with st.sidebar:
-    st.header("🔍 Filters")
-    city_filter = st.selectbox("City", ["All"] + sorted(df["city"].dropna().unique()))
-    min_overage = st.slider("Minimum Overage ($)", 0, int(df["overage_amount"].max()), 50000)
-    deadline_filter = st.checkbox("Show only claims expiring in < 30 days")
-
-# --- Apply Filters ---
-if city_filter != "All":
-    df = df[df["city"] == city_filter]
-df = df[df["overage_amount"] >= min_overage]
-if deadline_filter:
-    df = df[df["days_left"].notnull() & (df["days_left"] < 30)]
-
-# --- Display Dashboard ---
-st.subheader("📋 Unclaimed Overages")
-st.dataframe(
-    df[["apn", "address", "city", "zip", "overage_amount", "claim_deadline", "days_left", "status"]],
-    use_container_width=True
-)
-
-# --- Outreach Tracker ---
-st.subheader("📣 Outreach Status")
-status_counts = df["status"].value_counts()
-st.bar_chart(status_counts)
-
-# --- Export Option ---
-st.download_button("Download Filtered Data", df.to_csv(index=False), "riverside_overages.csv")
+# Run the pipeline
+df = fetch_tax_sale_data()
+store_in_supabase(df)
+print("Overage data stored successfully.")
