@@ -4,8 +4,8 @@ from datetime import datetime
 from supabase import create_client
 
 # --- Supabase Setup ---
-SUPABASE_URL = "https://your-project.supabase.co"
-SUPABASE_KEY = "your-anon-key"
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- Page Config ---
@@ -14,19 +14,23 @@ st.title("🏠 Riverside County Tax Overages Dashboard")
 st.markdown("Track unclaimed excess proceeds from tax-defaulted property sales.")
 
 # --- Load Data from Supabase ---
-response = supabase.table("overages_riverside").select("*").execute()
-df = pd.DataFrame(response.data)
+try:
+    response = supabase.table("overages_riverside").select("*").execute()
+    df = pd.DataFrame(response.data)
+except Exception as e:
+    st.error(f"Failed to load data: {e}")
+    st.stop()
 
 # --- Data Cleanup ---
-df["overage_amount"] = df["overage_amount"].astype(float)
-df["minimum_bid"] = df["minimum_bid"].astype(float)
-df["sale_price"] = df["sale_price"].astype(float)
+for col in ["overage_amount", "minimum_bid", "sale_price"]:
+    df[col] = pd.to_numeric(df[col], errors="coerce")
 
 # --- Claim Deadline Countdown ---
 def calculate_days_left(deadline):
-    if deadline:
+    try:
         return (datetime.strptime(deadline, "%Y-%m-%d") - datetime.today()).days
-    return None
+    except:
+        return None
 
 df["days_left"] = df["claim_deadline"].apply(calculate_days_left)
 
@@ -40,17 +44,16 @@ with st.sidebar:
 # --- Apply Filters ---
 if city_filter != "All":
     df = df[df["city"] == city_filter]
-
 df = df[df["overage_amount"] >= min_overage]
-
 if deadline_filter:
     df = df[df["days_left"].notnull() & (df["days_left"] < 30)]
 
 # --- Display Dashboard ---
 st.subheader("📋 Unclaimed Overages")
-st.dataframe(df[[
-    "apn", "address", "city", "zip", "overage_amount", "claim_deadline", "days_left", "status"
-]], use_container_width=True)
+st.dataframe(
+    df[["apn", "address", "city", "zip", "overage_amount", "claim_deadline", "days_left", "status"]],
+    use_container_width=True
+)
 
 # --- Outreach Tracker ---
 st.subheader("📣 Outreach Status")
@@ -59,4 +62,3 @@ st.bar_chart(status_counts)
 
 # --- Export Option ---
 st.download_button("Download Filtered Data", df.to_csv(index=False), "riverside_overages.csv")
-
