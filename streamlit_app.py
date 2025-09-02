@@ -1,41 +1,28 @@
-import requests
-from bs4 import BeautifulSoup
+import streamlit as st
 import pandas as pd
-from supabase import create_client, Client
 
-# Supabase setup
-url = "https://your-supabase-url.supabase.co"
-key = "your-supabase-api-key"
-supabase: Client = create_client(url, key)
+st.set_page_config(page_title="Claim Deadline Dashboard", layout="wide")
 
-def fetch_tax_sale_data():
-    response = requests.get("https://countytreasurer.org/tax-sales")
-    soup = BeautifulSoup(response.text, "html.parser")
-    
-    # Example: Extract table rows with parcel data
-    rows = soup.select("table tr")
-    data = []
-    for row in rows[1:]:
-        cols = row.find_all("td")
-        if len(cols) >= 4:
-            parcel = cols[0].text.strip()
-            min_bid = float(cols[2].text.replace("$", "").replace(",", ""))
-            sale_price = float(cols[3].text.replace("$", "").replace(",", ""))
-            overage = sale_price - min_bid if sale_price > min_bid else 0
-            data.append({"parcel": parcel, "min_bid": min_bid, "sale_price": sale_price, "overage": overage})
-    
-    return pd.DataFrame(data)
+st.title("🏠 Property Claim Deadline Tracker")
+st.markdown("Monitor upcoming deadlines for tax sale claims and outreach status.")
 
-def store_in_supabase(df):
-    for _, row in df.iterrows():
-        supabase.table("riverside_overages").insert({
-            "parcel": row["parcel"],
-            "min_bid": row["min_bid"],
-            "sale_price": row["sale_price"],
-            "overage": row["overage"]
-        }).execute()
+# Sample data — replace with Supabase or API call later
+data = {
+    "Parcel ID": ["123-456-789", "987-654-321"],
+    "Address": ["100 Main St, San Juan Capistrano", "200 Ocean Ave, Dana Point"],
+    "Auction Date": ["2024-09-01", "2024-10-15"],
+    "Claim Deadline": ["2025-09-01", "2025-10-15"],
+    "Status": ["Unclaimed", "Filed"]
+}
 
-# Run the pipeline
-df = fetch_tax_sale_data()
-store_in_supabase(df)
-print("Overage data stored successfully.")
+df = pd.DataFrame(data)
+
+# Filters
+status_filter = st.selectbox("Filter by Status", ["All", "Unclaimed", "Filed"])
+if status_filter != "All":
+    df = df[df["Status"] == status_filter]
+
+# Display
+st.dataframe(df, use_container_width=True)
+
+# Optional: Add map or outreach queue later
